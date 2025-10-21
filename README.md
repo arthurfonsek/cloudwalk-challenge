@@ -6,6 +6,8 @@ A 3-node distributed key-value store implementing a simplified Raft consensus al
 
 This project implements a distributed system where three nodes work together to maintain a consistent key-value store. The system uses the Raft consensus algorithm to ensure that all nodes agree on the same data, even when some nodes fail.
 
+This project was developed in a Ubuntu 22.04 LTS environment.
+
 ## Features
 
 - **Leader Election**: Automatic leader election with random timeouts
@@ -37,6 +39,12 @@ All features — including **leader election**, **log replication**, and **failu
 
 ```bash
 npm install
+```
+
+### 1.1 Make Sure That The Executable Files Are Marked As Executable
+```bash
+chmod +x launch.sh
+chmod +x cli
 ```
 
 ### 2. Start the Cluster
