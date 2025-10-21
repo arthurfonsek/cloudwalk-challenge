@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+CMD=${1:-}
+
+function usage() {
+  echo "Usage:" >&2
+  echo "  cli put <key> <value>" >&2
+  echo "  cli get <key>" >&2
+  echo "  cli status" >&2
+}
+
+if [[ -z "$CMD" ]]; then
+  usage
+  exit 1
+fi
+
+case "$CMD" in
+  put)
+    if [[ $# -ne 3 ]]; then
+      echo "Error: put requires <key> <value>" >&2
+      usage
+      exit 1
+    fi
+    exec node cli.js put "$2" "$3"
+    ;;
+  get)
+    if [[ $# -ne 2 ]]; then
+      echo "Error: get requires <key>" >&2
+      usage
+      exit 1
+    fi
+    exec node cli.js get "$2"
+    ;;
+  status)
+    exec node cli.js status
+    ;;
+  *)
+    echo "Unknown command: $CMD" >&2
+    usage
+    exit 1
+    ;;
+esac
+
+

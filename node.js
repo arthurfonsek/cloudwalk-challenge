@@ -63,15 +63,18 @@ class RaftNode {
         try {
             if (fs.existsSync(this.stateFile)) {
                 const stateData = JSON.parse(fs.readFileSync(this.stateFile, 'utf8'));
-                this.currentTerm = stateData.currentTerm || 0;
-                this.votedFor = stateData.votedFor;
-                this.commitIndex = stateData.commitIndex || -1;
-                this.lastApplied = stateData.lastApplied || -1;
+                this.currentTerm = stateData.currentTerm ?? 0;
+                this.votedFor = stateData.votedFor ?? null;
+                this.commitIndex = stateData.commitIndex ?? -1;
+                this.lastApplied = stateData.lastApplied ?? -1;
             }
             
             if (fs.existsSync(this.logFile)) {
                 const logData = JSON.parse(fs.readFileSync(this.logFile, 'utf8'));
-                this.log = logData.log || [];
+                this.log = logData.log ?? [];
+                // Rebuild in-memory KV store from committed log every startup
+                // because KV is not persisted. Reset lastApplied and replay.
+                this.lastApplied = -1;
                 this.applyCommittedEntries();
             }
         } catch (error) {
@@ -120,13 +123,8 @@ class RaftNode {
             return;
         }
 
-        // Deterministic per-node base + tiny jitter to break ties
-        // A: 300ms, B: 400ms, C: 500ms; fallback uses port-based offset
-        const baseMs = 300;
-        const idOffsets = { A: 0, B: 100, C: 200 };
-        const offset = idOffsets[this.id] ?? ((this.port % 3) * 100);
-        const jitter = Math.floor(Math.random() * this.electionJitterMaxMs);
-        const timeout = baseMs + offset + jitter;
+        // Randomized election timeout in [300ms, 500ms]
+        const timeout = 300 + Math.floor(Math.random() * 201);
         this.electionTimeout = setTimeout(() => {
             this.startElection();
         }, timeout);
@@ -146,10 +144,10 @@ class RaftNode {
 
         // Preflight reachability to avoid term churn when no quorum possible
         const totalNodes = this.peers.length + 1;
-        const majority = totalNodes === 2 ? 1 : 2;
+        const majority = Math.floor(totalNodes / 2) + 1;
         const probePromises = this.peers.map(async (peer) => {
             try {
-                await axios.get(`http://${peer}/metrics`, { timeout: 200 });
+                await axios.get(`http://${peer}/metrics`, { timeout: 500 });
                 return true;
             } catch {
                 return false;
@@ -200,17 +198,6 @@ class RaftNode {
         const reachable = 1 + results.filter(v => v !== null).length;
         votes += results.filter(v => v === true).length;
 
-        // If quorum collapsed mid-vote, pause
-        if (reachable < majority) {
-            const backoffMs = this.electionBackoffMs;
-            console.log(`Node ${this.id}: No quorum (reachable ${reachable}/${totalNodes}). Pausing elections for ${backoffMs}ms.`);
-            this.state = 'follower';
-            this.quorumBackoffUntil = Date.now() + backoffMs;
-            this.electionBackoffMs = Math.min(this.electionBackoffMs * 2, this.maxElectionBackoffMs);
-            this.startElectionTimer();
-            return;
-        }
-
         console.log(`Node ${this.id}: Reachable ${reachable}/${totalNodes}, votes ${votes}, need ${majority}`);
         
         if (votes >= majority) {
@@ -235,6 +222,16 @@ class RaftNode {
         this.lastHeartbeat = Date.now();
         this.lastKnownLeaderAddr = `localhost:${this.port}`;
         
+        // Append a no-op entry in the new leader term to safely advance commit index
+        // and bring previously committed entries along per Raft's commit rule.
+        const noopEntry = {
+            term: this.currentTerm,
+            type: 'noop',
+            timestamp: Date.now()
+        };
+        this.log.push(noopEntry);
+        this.persistState();
+
         // Initialize leader state
         this.peers.forEach(peer => {
             this.nextIndex[peer] = this.log.length;
@@ -264,26 +261,39 @@ class RaftNode {
     async sendHeartbeats() {
         const promises = this.peers.map(async (peer) => {
             try {
-                await axios.post(`http://${peer}/append`, {
+                const prevIdx = (this.nextIndex[peer] ?? this.log.length) - 1;
+                const prevTerm = prevIdx >= 0 ? (this.log[prevIdx]?.term || 0) : 0;
+                const entries = this.log.slice((this.nextIndex[peer] ?? this.log.length));
+                const resp = await axios.post(`http://${peer}/append`, {
                     term: this.currentTerm,
                     leaderId: this.id,
                     leaderAddress: `localhost:${this.port}`,
-                    prevLogIndex: this.nextIndex[peer] - 1,
-                    prevLogTerm: this.nextIndex[peer] > 0 ? this.log[this.nextIndex[peer] - 1].term : 0,
-                    entries: this.log.slice(this.nextIndex[peer]),
+                    prevLogIndex: prevIdx,
+                    prevLogTerm: prevTerm,
+                    entries,
                     leaderCommit: this.commitIndex
                 }, { timeout: 1000 });
-                
-                this.nextIndex[peer] = this.log.length;
-                this.matchIndex[peer] = this.log.length - 1;
+
+                const ok = resp?.data?.success === true;
+                if (ok) {
+                    // Advance indices to reflect follower match
+                    const advancedTo = prevIdx + (entries?.length || 0) + 1;
+                    this.matchIndex[peer] = Math.max(this.matchIndex[peer] ?? -1, advancedTo - 1);
+                    this.nextIndex[peer] = Math.max(this.nextIndex[peer] ?? 0, advancedTo);
+                } else {
+                    // Conflict: back off nextIndex to find matching point
+                    if ((this.nextIndex[peer] ?? 0) > 0) {
+                        this.nextIndex[peer] = (this.nextIndex[peer] ?? 1) - 1;
+                    }
+                }
             } catch (error) {
-                // Follower might be down, decrease nextIndex
-                if (this.nextIndex[peer] > 0) {
-                    this.nextIndex[peer]--;
+                // Follower might be down or timed out: decrease nextIndex for next attempt
+                if ((this.nextIndex[peer] ?? 0) > 0) {
+                    this.nextIndex[peer] = (this.nextIndex[peer] ?? 1) - 1;
                 }
             }
         });
-        
+
         await Promise.all(promises);
         this.updateCommitIndex();
     }
@@ -459,8 +469,8 @@ class RaftNode {
         while (Date.now() < deadline && this.state === 'leader') {
             const results = await Promise.all(this.peers.map(p => replicateToPeer(p)));
             const acks = 1 + results.filter(Boolean).length; // leader + followers that matched entry
-            const totalNodes = this.peers.length + 1;
-            const majority = totalNodes === 2 ? 1 : 2;
+        const totalNodes = this.peers.length + 1;
+        const majority = Math.floor(totalNodes / 2) + 1;
             if (acks >= majority && this.log[entryIndex]?.term === this.currentTerm) {
                 // Advance commit to entryIndex
                 this.commitIndex = Math.max(this.commitIndex, entryIndex);

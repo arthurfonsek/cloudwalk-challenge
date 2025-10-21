@@ -38,16 +38,16 @@ This will start three nodes:
 
 ```bash
 # Check cluster status
-node cli.js status
+./cli status
 
 # Store a key-value pair
-node cli.js put name "John Doe"
+./cli put name "John Doe"
 
 # Retrieve a value
-node cli.js get name
+./cli get name
 
 # Check status again
-node cli.js status
+./cli status
 ```
 
 ## API Endpoints
@@ -193,7 +193,7 @@ node cli.js status
 
 # Find and kill leader
 echo "4. Finding and killing leader..."
-LEADER_NODE=$(node cli.js status | grep "State: leader" -B 1 | grep "Node" | awk '{print $2}' | cut -d: -f2)
+LEADER_NODE=$(./cli status | grep "State: leader" -B 1 | grep "Node" | awk '{print $2}' | cut -d: -f2)
 echo "Leader is on port: $LEADER_NODE"
 
 if [ "$LEADER_NODE" = "5000" ]; then
@@ -210,13 +210,13 @@ sleep 5
 
 # Check new status
 echo "6. New cluster status:"
-node cli.js status
+./cli status
 
 # Verify data survived
 echo "7. Verifying data survived:"
-node cli.js get test_key
-node cli.js get x
-node cli.js get y
+./cli get test_key
+./cli get x
+./cli get y
 
 echo "8. Test completed!"
 ```
@@ -226,8 +226,10 @@ echo "8. Test completed!"
 ```
 ├── node.js          # Main node implementation
 ├── cli.js           # Command-line interface
+├── cli              # Executable wrapper for cli.js (put/get/status)
 ├── launch.sh        # Cluster startup script
 ├── package.json     # Dependencies
+├── DESIGN.md        # 1-page design document
 └── README.md        # This file
 ```
 
