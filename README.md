@@ -90,9 +90,9 @@ This will start three nodes:
 ./launch.sh
 
 # In another terminal, test operations
-node cli.js put test "hello world"
-node cli.js get test
-node cli.js status
+./cli put test "hello world"
+./cli get test
+./cli status
 ```
 
 ### Fault Tolerance Test
@@ -101,11 +101,11 @@ node cli.js status
 ./launch.sh
 
 # Store some data
-node cli.js put x 1
-node cli.js put y 2
+./cli put x 1
+./cli put y 2
 
 # Find which node is the leader
-node cli.js status
+./cli status
 
 # Kill the leader process (replace A/B/C with actual leader)
 # Method 1: Kill by node ID
@@ -121,12 +121,12 @@ pkill -f "node.*--id C"  # Kill node C
 # pkill -f "port 5002"  # Kill node on port 5002
 
 # Wait for new leader election
-sleep 3
-node cli.js status
+sleep 0.8
+./cli status
 
 # Verify data survived
-node cli.js get x
-node cli.js get y
+./cli get x
+./cli get y
 ```
 
 ### How to Kill the Leader
@@ -156,13 +156,7 @@ pkill -f "port 5001"  # Kill node on port 5001
 pkill -f "port 5002"  # Kill node on port 5002
 ```
 
-#### Method 3: Kill All Nodes
-```bash
-# Kill all nodes at once
-pkill -f "node.*--id"
-```
-
-#### Method 4: Find and Kill Leader Process
+#### Method 3: Find and Kill Leader Process
 ```bash
 # Find the leader process
 ps aux | grep "node.*--id" | grep -v grep
@@ -171,54 +165,17 @@ ps aux | grep "node.*--id" | grep -v grep
 kill <PID>
 ```
 
-### Complete Fault Tolerance Test Script
+### How to Restart Nodes after Killing It
+
 ```bash
-#!/bin/bash
-echo "=== FAULT TOLERANCE TEST ==="
+# Run the A node again
+node node.js --id A --port 5000 --peers localhost:5001,localhost:5002
 
-# Start cluster
-echo "1. Starting cluster..."
-./launch.sh &
-sleep 5
+# Run the B node again
+node node.js --id B --port 5001 --peers localhost:5000,localhost:5002
 
-# Store test data
-echo "2. Storing test data..."
-node cli.js put test_key "test_value"
-node cli.js put x 1
-node cli.js put y 2
-
-# Show initial status
-echo "3. Initial cluster status:"
-node cli.js status
-
-# Find and kill leader
-echo "4. Finding and killing leader..."
-LEADER_NODE=$(./cli status | grep "State: leader" -B 1 | grep "Node" | awk '{print $2}' | cut -d: -f2)
-echo "Leader is on port: $LEADER_NODE"
-
-if [ "$LEADER_NODE" = "5000" ]; then
-    pkill -f "node.*--id A"
-elif [ "$LEADER_NODE" = "5001" ]; then
-    pkill -f "node.*--id B"
-elif [ "$LEADER_NODE" = "5002" ]; then
-    pkill -f "node.*--id C"
-fi
-
-# Wait for new leader election
-echo "5. Waiting for new leader election..."
-sleep 5
-
-# Check new status
-echo "6. New cluster status:"
-./cli status
-
-# Verify data survived
-echo "7. Verifying data survived:"
-./cli get test_key
-./cli get x
-./cli get y
-
-echo "8. Test completed!"
+# Run the C node again
+node node.js --id C --port 5002 --peers localhost:5000,localhost:5001
 ```
 
 ## File Structure
@@ -262,25 +219,7 @@ Metrics include:
 
 ### Common Issues
 
-#### 1. Multiple Elections / Election Loops
-If you see continuous elections like "Starting election for term X", this indicates a network issue:
-```bash
-# Kill all nodes and restart
-pkill -f "node.*--id"
-sleep 2
-./launch.sh
-```
-
-#### 1.1. JavaScript Errors in Elections
-If you see "TypeError: Cannot read properties of undefined (reading 'term')":
-```bash
-# This is fixed in the latest version, but if you see it:
-pkill -f "node.*--id"
-sleep 2
-./launch.sh
-```
-
-#### 1.2. Wrong pkill Syntax
+#### 1. Wrong pkill Syntax
 If you get "pkill: only one pattern can be provided":
 ```bash
 # WRONG: pkill -f "node"--id A
@@ -289,7 +228,10 @@ If you get "pkill: only one pattern can be provided":
 ```
 
 #### 2. No Leader Found
-If CLI shows "No leader found":
+If CLI shows "No leader found. Cluster might be down.":
+
+Maybe two of the nodes are down, and the remaining can not be elected as leader because it does not have the majority of the votes (quorum).
+
 ```bash
 # Check if nodes are running
 ps aux | grep "node.*--id" | grep -v grep
@@ -309,10 +251,8 @@ If you get "EADDRINUSE" errors:
 ```bash
 # Kill processes using the ports
 sudo lsof -ti:5000,5001,5002 | xargs kill -9
-
-# Or kill all node processes
-pkill -f "node.*--id"
 ```
+Or you can run in other ports, just modify the ```./launch.sh``` to desire ports
 
 #### 4. Data Not Persisting
 Check if state files are being created:
@@ -321,29 +261,3 @@ ls -la node_*_state.json
 ls -la node_*_log.json
 ```
 
-### Manual Leader Election Test
-```bash
-# Start cluster
-./launch.sh
-
-# In another terminal, watch elections
-watch -n 1 'node cli.js status | grep -E "(State:|Term:)"'
-
-# Kill leader manually
-pkill -f "node.*--id A"  # or B or C
-
-# Watch new election happen
-```
-
-### Debug Mode
-To see detailed logs, run nodes individually:
-```bash
-# Terminal 1
-node node.js --id A --port 5000 --peers localhost:5001,localhost:5002
-
-# Terminal 2  
-node node.js --id B --port 5001 --peers localhost:5000,localhost:5002
-
-# Terminal 3
-node node.js --id C --port 5002 --peers localhost:5000,localhost:5001
-```
