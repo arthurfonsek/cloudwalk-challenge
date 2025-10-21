@@ -1,0 +1,33 @@
+{
+  "log": [
+    {
+      "term": 1,
+      "type": "noop",
+      "timestamp": 1761084213347
+    },
+    {
+      "term": 1,
+      "type": "put",
+      "key": "cloud",
+      "value": "walk",
+      "timestamp": 1761084234199
+    },
+    {
+      "term": 1,
+      "type": "put",
+      "key": "vou",
+      "value": "passar",
+      "timestamp": 1761084243201
+    },
+    {
+      "term": 2,
+      "type": "noop",
+      "timestamp": 1761084304092
+    },
+    {
+      "term": 4,
+      "type": "noop",
+      "timestamp": 1761084465093
+    }
+  ]
+}

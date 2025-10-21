@@ -39,8 +39,10 @@ class RaftNode {
         this.lastHeartbeat = Date.now();
         this.quorumBackoffUntil = 0; // avoid thrashing when no majority is possible
         this.electionBackoffMs = 1000;
-        this.maxElectionBackoffMs = 10000;
-        this.electionJitterMaxMs = 50; // small jitter to avoid lockstep elections
+        this.maxElectionBackoffMs = 1500;
+        this.electionJitterMaxMs = 300; // small jitter to avoid lockstep elections
+        this.backoffProbeInterval = null; // periodic quorum probe while backing off
+        this.probeInFlight = false; // prevent overlapping probes
         
         // Key-value store
         this.kvStore = new Map();
@@ -119,15 +121,67 @@ class RaftNode {
         const now = Date.now();
         if (now < this.quorumBackoffUntil) {
             const delay = Math.max(50, this.quorumBackoffUntil - now);
+            // Begin probing for quorum while waiting so we can exit early
+            this.startBackoffProbe();
             this.electionTimeout = setTimeout(() => this.startElection(), delay);
             return;
         }
+        // Not backing off anymore: ensure probe is stopped
+        this.stopBackoffProbe();
 
         // Randomized election timeout in [300ms, 500ms]
         const timeout = 300 + Math.floor(Math.random() * 201);
         this.electionTimeout = setTimeout(() => {
             this.startElection();
         }, timeout);
+    }
+
+    // Periodically check if quorum is reachable during backoff; if yes, exit backoff early
+    startBackoffProbe() {
+        if (this.backoffProbeInterval) return;
+        this.backoffProbeInterval = setInterval(async () => {
+            try {
+                // Stop if conditions changed
+                if (this.state === 'leader' || Date.now() >= this.quorumBackoffUntil) {
+                    this.stopBackoffProbe();
+                    return;
+                }
+                if (this.probeInFlight) return;
+                this.probeInFlight = true;
+
+                const totalNodes = this.peers.length + 1;
+                const majority = Math.floor(totalNodes / 2) + 1;
+                const probePromises = this.peers.map(async (peer) => {
+                    try {
+                        await axios.get(`http://${peer}/metrics`, { timeout: 250 });
+                        return true;
+                    } catch {
+                        return false;
+                    }
+                });
+                const probeResults = await Promise.all(probePromises);
+                const reachable = 1 + probeResults.filter(Boolean).length;
+                if (reachable >= majority) {
+                    // Clear backoff and trigger election immediately
+                    this.quorumBackoffUntil = 0;
+                    this.stopBackoffProbe();
+                    if (this.electionTimeout) {
+                        clearTimeout(this.electionTimeout);
+                        this.electionTimeout = null;
+                    }
+                    this.startElection();
+                }
+            } finally {
+                this.probeInFlight = false;
+            }
+        }, 200);
+    }
+
+    stopBackoffProbe() {
+        if (this.backoffProbeInterval) {
+            clearInterval(this.backoffProbeInterval);
+            this.backoffProbeInterval = null;
+        }
     }
     
     /**
@@ -221,6 +275,7 @@ class RaftNode {
         this.state = 'leader';
         this.lastHeartbeat = Date.now();
         this.lastKnownLeaderAddr = `localhost:${this.port}`;
+        this.stopBackoffProbe();
         
         // Append a no-op entry in the new leader term to safely advance commit index
         // and bring previously committed entries along per Raft's commit rule.
@@ -396,6 +451,7 @@ class RaftNode {
             if (leaderAddress) {
                 this.lastKnownLeaderAddr = leaderAddress;
             }
+            this.stopBackoffProbe();
             this.startElectionTimer();
         }
         

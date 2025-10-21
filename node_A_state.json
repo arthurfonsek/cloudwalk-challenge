@@ -1,0 +1,6 @@
+{
+  "currentTerm": 4,
+  "votedFor": "B",
+  "commitIndex": 4,
+  "lastApplied": 4
+}

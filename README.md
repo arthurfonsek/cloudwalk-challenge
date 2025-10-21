@@ -15,6 +15,22 @@ This project implements a distributed system where three nodes work together to 
 - **HTTP API**: RESTful interface for both internal communication and client operations
 - **CLI Tool**: Command-line interface for easy interaction
 
+## Development Notes
+
+This project was developed using **Node.js**, leveraging **Express** for the REST API layer and **Axios** for inter-node communication within the Raft cluster.  
+The **native `fs` module** was used for data persistence, allowing each node to store its state and log entries locally in JSON files.  
+This lightweight setup eliminated the need for external databases while keeping the Raft state transparent and easy to inspect during testing.  
+
+The **CLI tool** was also implemented in Node.js to provide an intuitive interface for cluster interaction — enabling quick read/write operations and live status checks.  
+The local environment was orchestrated through simple shell scripts, making it possible to spin up or terminate all three nodes easily for demonstration and testing.
+
+Artificial Intelligence (AI) played an important role throughout development.  
+**GPT-5** was used to help orchestrate the overall project structure and infrastructure logic, ensuring consistent behavior across all components.  
+Meanwhile, **Claude-4.5-Haiku** assisted in refining the internal logic, clarifying specific concepts of the **Raft consensus algorithm**, and supporting the development of the **CLI interface**.  
+
+All features — including **leader election**, **log replication**, and **failure recovery** — were manually reviewed and validated to ensure a deep and practical understanding of how distributed consensus operates within a fault-tolerant system.
+
+
 ## Quick Start
 
 ### 1. Install Dependencies
@@ -260,4 +276,6 @@ Check if state files are being created:
 ls -la node_*_state.json
 ls -la node_*_log.json
 ```
+
+
 
